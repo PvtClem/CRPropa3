@@ -20,7 +20,7 @@ namespace crpropa {
  This module simulates electron triplet pair production of electrons with background photons for several photon fields.
  The secondary electrons from this interaction are optionally created (default = false).
  The module limits the propagation step size to a fraction of the mean free path (default = 0.1).
- Thinning is available. A thinning of 0 means that all particles are tracked. 
+ Thinning is available. A thinning of 0 means that all particles are tracked.
  For the maximum thinning of 1, only a few representative particles are added to the list of secondaries.
  Note that for thinning>0 the output must contain the column "weights", which should be included in the post-processing.
 */
@@ -35,7 +35,7 @@ private:
 	// tabulated interaction rate 1/lambda(E)
 	std::vector<double> tabEnergy;  //!< electron energy in [J]
 	std::vector<double> tabRate;  //!< interaction rate in [1/m]
-	
+
 	// tabulated CDF(s_kin, E) = cumulative differential interaction rate
 	std::vector<double> tabE;  //!< electron energy in [J]
 	std::vector<double> tabs;  //!< s_kin = s - m^2 in [J**2]
@@ -53,7 +53,7 @@ public:
 	// set the target photon field
 	void setPhotonField(ref_ptr<PhotonField> photonField);
 
-	// decide if secondary electrons are added to the simulation	
+	// decide if secondary electrons are added to the simulation
 	void setHaveElectrons(bool haveElectrons);
 
 	/** limit the step to a fraction of the mean free path
@@ -71,7 +71,7 @@ public:
 	 */
 	void setInteractionTag(std::string tag);
 	std::string getInteractionTag() const;
-	
+
 	void initRate(std::string filename);
 	void initCumulativeRate(std::string filename);
 

@@ -369,6 +369,7 @@ add_library(crpropa SHARED
   src/module/EMInverseComptonScattering.cpp
   src/module/EMPairProduction.cpp
   src/module/EMTripletPairProduction.cpp
+  src/module/HadronicInteraction.cpp
   src/module/ElasticScattering.cpp
   src/module/ElectronPairProduction.cpp
   src/module/HDF5Output.cpp

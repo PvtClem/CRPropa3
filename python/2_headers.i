@@ -411,6 +411,7 @@
 %include "crpropa/module/EMPairProduction.h"
 %include "crpropa/module/EMDoublePairProduction.h"
 %include "crpropa/module/EMTripletPairProduction.h"
+%include "crpropa/module/HadronicInteraction.h"
 %include "crpropa/module/EMInverseComptonScattering.h"
 %include "crpropa/module/SynchrotronRadiation.h"
 %include "crpropa/module/AdiabaticCooling.h"

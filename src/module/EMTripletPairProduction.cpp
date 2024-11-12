@@ -72,7 +72,7 @@ void EMTripletPairProduction::initCumulativeRate(std::string filename) {
 	tabE.clear();
 	tabs.clear();
 	tabCDF.clear();
-	
+
 	// skip header
 	while (infile.peek() == '#')
 		infile.ignore(std::numeric_limits < std::streamsize > ::max(), '\n');
@@ -167,12 +167,12 @@ void EMTripletPairProduction::process(Candidate *candidate) const {
 	do {
 		double randDistance = -log(random.rand()) / rate;
 		// check for interaction; if it doesn't occur, limit next step
-		if (step < randDistance) { 
+		if (step < randDistance) {
 			candidate->limitNextStep(limit / rate);
 			return;
 		}
 		performInteraction(candidate);
-		step -= randDistance; 
+		step -= randDistance;
 	} while (step > 0.);
 }
 

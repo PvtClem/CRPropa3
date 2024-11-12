@@ -34,6 +34,7 @@
 #include "crpropa/module/EMInverseComptonScattering.h"
 #include "crpropa/module/EMPairProduction.h"
 #include "crpropa/module/EMTripletPairProduction.h"
+#include "crpropa/module/HadronicInteraction.h"
 #include "crpropa/module/ElasticScattering.h"
 #include "crpropa/module/ElectronPairProduction.h"
 #include "crpropa/module/HDF5Output.h"
