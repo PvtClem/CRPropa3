@@ -1,10 +1,12 @@
-#ifndef CRPROPA_HADRONICINTERACTION_H
-#define CRPROPA_HADRONICINTERACTION_H
+#ifndef CRPROPA_HadronicInteraction2_H
+#define CRPROPA_HadronicInteraction2_H
 
 #include <fstream>
 #include <cmath>
 
+
 #include "crpropa/Module.h"
+#include "crpropa/massDistribution/Density.h"
 
 namespace crpropa {
 /**
@@ -21,38 +23,38 @@ namespace crpropa {
 class HadronicInteraction: public Module {
 private:
 
-  double Density;
+
+  ref_ptr<Density> gasDensity;
 	bool haveElectrons;
   bool havePhotons;
   bool haveNeutrinos;
 	double limit;
 	double thinning;
-	std::string interactionTag = "HI";
+	std::string interactionTag = "HadronicInteraction";
 
-	// tabulated interaction rate 1/lambda(E)
-  std::vector<double> tabEnergy;  //!< hadron energy in [GeV]
-	std::vector<double> tabCS;  //!< cross-section
+  std::map<int, std::string> part_numbering;
+  std::vector<std::string> Filenames;
+  std::map<std::string, std::vector<std::vector<double>>> dict; // E primary and cross section, at a gievn E primary (ie integrated over Esec)
+  std::map<std::string, std::vector<double>> dictE_sec; // list of E sec
+  std::map<std::string, std::vector<double>> dictE_prim; // list of E prim that are in cumulative data
+  std::map<std::string, std::vector<std::vector<double>>> dict_cumDCS; // cumulative differential cross-section
 
-	// tabulated CDF(s_kin, E) = cumulative differential interaction rate
-	std::vector<double> tabE;  //!< hadron energy in [J]
-	std::vector<double> tabs;  //!< s_kin = s - m^2 in [J**2]
-	std::vector< std::vector<double> > tabCDF;  //!< cumulative interaction rate
 
 public:
 	/** Constructor
-   @param Density
+   @param gasDensity; model of galactic gas density
 	 @param haveElectrons	if true, add secondary electrons as candidates
 	 @param havePhotons	if true, add secondary photons as candidates
 	 @param haveNeutrinos	if true, add secondary neutrinos as candidates
 	 @param thinning		weighted sampling of secondaries (0: all particles are tracked; 1: maximum thinning)
 	 @param limit			step size limit as fraction of mean free path
 	 */
-	HadronicInteraction(double Density = 0.0, bool haveElectrons = false, bool havePhotons = false, bool haveNeutrinos = false, double thinning = 0, double limit = 0.1);
+	HadronicInteraction( ref_ptr<Density> gasDensity , bool haveElectrons = false, bool havePhotons = false, bool haveNeutrinos = false, double thinning = 0, double limit = 0.1);
 
   /**
   @param Density
   */
-  void setGasDensity(double Density);
+  void setGasDensity(ref_ptr<Density> gasDensity);
 
 	// decide if secondary electrons are added to the simulation
 	void setHaveElectrons(bool haveElectrons);
@@ -76,17 +78,22 @@ public:
 	/** set a custom interaction tag to trace back this interaction
 	 * @param tag string that will be added to the candidate and output
 	 */
+
+  void setTables();
+
+  std::vector<double> setInteraction(Candidate *candidate) const;
+
 	void setInteractionTag(std::string tag);
 	std::string getInteractionTag() const;
 
-	void getCS(std::string filename) ;
 
-	void process(Candidate *candidate)  ;
-	void performInteraction(Candidate *candidate) const ;
+	void process(Candidate *candidate) const ;
+	void performInteraction(Candidate *candidate, double secondary) const ;
 
 };
 /** @}*/
 
 } // namespace crpropa
 
-#endif // CRPROPA_HADRONICINTERACTION_H
+#endif // CRPROPA_HadronicInteraction_H
+

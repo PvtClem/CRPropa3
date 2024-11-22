@@ -1,7 +1,6 @@
 #include "crpropa/module/HadronicInteraction.h"
 #include "crpropa/Units.h"
 #include "crpropa/Random.h"
-#include "crpropa/massDistribution/ConstantDensity.h"
 
 #include <fstream>
 #include <limits>
@@ -9,19 +8,16 @@
 #include <string>
 
 
-#include <iostream> //
-
-
 
 namespace crpropa {
 
-static const double mec2 = mass_electron * c_squared / GeV; // in GeV
-static const double mpc2 = mass_proton * c_squared / GeV;
-static const double mnc2 = mass_neutron * c_squared / GeV;
+static const double mec2 = mass_electron * c_squared ; // in J
+static const double mpc2 = mass_proton * c_squared ;
+static const double mnc2 = mass_neutron * c_squared ;
 
 
 
-HadronicInteraction::HadronicInteraction( double H_density, double He_density, bool haveElectrons, bool havePhotons, bool haveNeutrinos, double thinning, double limit) {
+HadronicInteraction::HadronicInteraction( double H_density, double He_density, bool haveElectrons, bool havePhotons, bool haveNeutrinos, bool haveantiNucleons, double thinning, double limit) {
   setGasDensity(H_density, He_density); // this one will probably disappear in order to be set from the simulation
 	setHaveElectrons(haveElectrons);
 	setHavePhotons(havePhotons);
@@ -49,6 +45,10 @@ void HadronicInteraction::setHaveNeutrinos(bool haveNeutrinos) {
 	this->haveNeutrinos = haveNeutrinos;
 }
 
+void HadronicInteraction::setHaveantiNucleons(bool haveantiNucleons) {
+	this->haveantiNucleons = haveantiNucleons;
+}
+
 void HadronicInteraction::setLimit(double limit) {
 	this->limit = limit;
 }
@@ -59,19 +59,23 @@ void HadronicInteraction::setThinning(double thinning) {
 
 void HadronicInteraction::setTables(){
 
+  data_map[1000010010] = std::map<int, std::vector<std::vector<std::vector<double>>>>(); // first layer of the map, based on the CR identity
+  data_map[1000020040] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
+  data_map[1000060120] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
+  data_map[1000130260] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
+  data_map[1000260520] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
+  data_map[1000010012] = std::map<int, std::vector<std::vector<std::vector<double>>>>(); // + 1 at the end : to say that the target is Helium
+  data_map[1000020042] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
+
 
   std::string name = "./filenames.txt";
   Filenames.clear();
 
 	std::ifstream infile(name.c_str());
 
-   part_numbering[1000010010] = "_p_";
-   part_numbering[1000020040] = "_He_";
-   part_numbering[1000060120] = "_C_";
-   part_numbering[1000130260] = "_Al_";
-   part_numbering[1000260520] = "_Fe_";
 
-  if (!infile.good()){ // get the name of the data files
+  // get the name of the data files
+  if (!infile.good()){
     throw std::runtime_error("HadronicInteraction: could not open file " + name);
     }
 
@@ -88,26 +92,70 @@ void HadronicInteraction::setTables(){
   infile.close();
 
 
-  for (std::string filename : Filenames) {   // collect the data in 3 dicts
+  int id; // identity of the CR
+  int secondary;
+
+  for (std::string filename : Filenames) {   // collect the data in a map of map of tuple of vectors (and then I can only use ints) and keep track of the primary and secondary
 
     std::string path = "./Tables_HI/" + filename;
 
-    if (filename.find("cum") != std::string::npos) {
-        std::string reduced_name = filename;
-        dict_cumDCS[reduced_name.erase(0, 4)] = std::vector<std::vector<double>>{};  // Erases k characters after idx, ie we get the same name as when it's not the cumulative cross sections but the real one
-        dictE_sec[reduced_name] = std::vector<double>{};
-        dictE_prim[reduced_name] = std::vector<double>{};
 
-        std::ifstream infile(path.c_str());
+    // initialize the maps
+    for (const auto& [key_CR, value_CR] : CR_numbering) {
+        if (filename.find(key_CR) != std::string::npos) {
+          if (filename.find("p04")!= std::string::npos) {
+            id = value_CR;
+          } else {
+              id = value_CR + 2; // ie the target is helium
+            }
+          break; // avoid continuing in the loop for nothing
+        }
+      }
+      std::string starter;
+      if (filename.find("cum") != std::string::npos ) {
+        starter = filename.substr(4, 6); // 6 : length of the string
+      }
+      else {
+        starter = filename.substr(0, 6);
+      }
+      for (const auto& [key, value] : secondaries_numbering) {
+        if (starter.find(key) == 0) { // otherwise I had some issues with for example "n_" and "an_" : the second contains the first, hence find is not good enough, we also need the location
+          if (data_map.find(id) == data_map.end() || data_map[id].find(value) == data_map[id].end()) { // check if we already initialized it
 
-        if (!infile.good()){
-          throw std::runtime_error("HadronicInteraction: could not open file " + filename);
+            data_map[id][value] = std::vector<std::vector<std::vector<double>>>();
+            data_map[id][value].resize(5);
+
+            data_map[id][value][0].resize(2);
+            data_map[id][value][1].resize(2);
+            data_map[id][value][3].resize(2);
+
           }
+          secondary = value;
+          break;
+        }
+      }
+    int to_fill1 = 1;
+    int to_fill2 = 2;
+
+    if (filename.find("04L") != std::string::npos){
+      to_fill1 = 3;   // ie in that case we fill in the two last vectors, where we put the (Eprimary Esecondary) we have for this file, and the differential cross section
+      to_fill2 = 4;
+    }
+
+    //std::cout << id << "  " << secondary << "  " << to_fill2 << "  " << filename << std::endl;
+
+    if (filename.find("cum") != std::string::npos ) {
 
 
-        bool firstLine = true;
-        double value;
-        double firstValue;
+      std::ifstream infile(path.c_str());
+
+      if (!infile.good()){
+        throw std::runtime_error("HadronicInteraction: could not open file " + filename);
+        }
+
+      bool firstLine = true;
+      double data;
+      double firstValue;
 
         while (infile.good()) {
           if (infile.peek() != '#') {  // Ignore lines starting with '#'
@@ -115,11 +163,10 @@ void HadronicInteraction::setTables(){
               if (std::getline(infile, line)) {
                   std::istringstream stream(line);
 
-
                   if (firstLine) {
                       stream >> firstValue;
-                      while (stream >> value){
-                        dictE_sec[reduced_name].push_back(value);
+                      while (stream >> data){
+                        data_map[id][secondary][to_fill1][1].push_back(data * GeV);  // put it in Joules // maybe I need to initialize // st::get : needed because this is a tuple // energies of secondaries
                       }
 
                       firstLine = false;
@@ -127,15 +174,16 @@ void HadronicInteraction::setTables(){
 
                   else{
                     stream >> firstValue;
-                    dictE_prim[reduced_name].push_back(firstValue); // the list of Eprimary for cumulative data is smaller, because I separeted the low energy part from the rest (the Esec were different)
+                    data_map[id][secondary][to_fill1][0].push_back(firstValue * GeV); // the list of Eprimary for cumulative data is smaller, because I separeted the low energy part from the rest (the Esec were different)
                     // Store the rest of the line into a row vector
                     std::vector<double> row;
-                    while (stream >> value) {
-                      row.push_back(value );  // store each remaining value ! Careful, it's mbarn
+                    while (stream >> data) {
+                      row.push_back(data);  // store each remaining value ! No unit as a normalised it (ie the tables are normalised between 0 and 1)
                     }
 
                     if (!row.empty()) {   // if row is not empty
-                      dict_cumDCS[reduced_name].push_back(row); // each row correspond to a given primary energy, what varies are the sencondary energies that are being considered
+                      data_map[id][secondary][to_fill2].push_back(row); // each row correspond to a given primary energy, what varies are the secondary energies that are being considered
+                      const auto& lol = data_map[id][secondary][to_fill2][0];
                   }
                   }
               }
@@ -144,10 +192,7 @@ void HadronicInteraction::setTables(){
       }
 
     } else {
-        dict[filename] = std::vector<std::vector<double>>{};
-        dict[filename].resize(2); // create two empty vectors, so that the structure of the map is set
 
-        //std::ifstream infile(("./Tables_HI/" + filename).c_str());
         std::ifstream infile(path.c_str());
 
         if (!infile.good()){
@@ -159,51 +204,50 @@ void HadronicInteraction::setTables(){
               double a, b;
               infile >> a >> b;
               if (infile) {
-                dict[filename][0].push_back(a); // a is the primary energy
-                dict[filename][1].push_back(b); // b is the cross section
+                data_map[id][secondary][0][0].push_back(a * GeV); // a is the primary energy, put it in J
+                data_map[id][secondary][0][1].push_back(b * (barn * 1e-3)); // b is the cross section ; again, from mbarns to SI (m^2)
               }
             }
             infile.ignore(std::numeric_limits < std::streamsize > ::max(), '\n'); //to ignore the rest of the line
           }
         }
+
     infile.close();
   }
-
+std::cout << "Data loaded" << std::endl;
 }
 
 
 
-std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) const { // given a particle, get the primary total energies back, and use it (and the cross-sections) to decide what secondary will be produced (provided an interaction occurs). Then we need to decide whether the interaction occurs or not (given the total cross-section computed here, in process), and then perform the interaction (in performInteraction)
+std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) const { // given a particle, gets the primary total energies back, and uses it (and the cross-sections) to decide what secondary will be produced (provided an interaction occurs). Then we need to decide whether the interaction occurs or not (given the total cross-section computed here, in process), and then perform the interaction (in performInteraction)
+
 
   int id = candidate->current.getId();
   double z = candidate->getRedshift();
-  double E = candidate->current.getEnergy() * (1+z) / GeV ; // convert energy from J to GeV
+  double E = candidate->current.getEnergy() * (1+z) ;
 
   double CS_tot = 0;
-  double secondary = 0;
-  int index = 0;
+  int secondary = 0;
 
   std::vector<double> tabCS_E; // table of cross sections (for different processes) at a given energy : used to decide which process we perform
-  std::string chain = part_numbering.at(id); // can do any CR for which we have tables //  use .at() instead of just [] because we are in const functions, and part_numbering was defined outised this function
-  std::vector<int> indexes;
 
-  std::vector<std::string> tab_filenames;
+  for (size_t i = 0; i < secondaries.size(); ++i) {
 
+    tabCS_E.push_back(interpolate(E, data_map.at(id).at(secondaries.at(i)).at(0).at(0), data_map.at(id).at(secondaries.at(i)).at(0).at(1))); // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
 
-  for (const auto& name : Filenames) { // get the files we are interested in (in that case the ones for which the primary is a proton)
-    if (name.find(chain) != std::string::npos && name.find("04L") == std::string::npos &&  name.find("cum") == std::string::npos) { // we only want the interaction with protons for now, and the 04L are there only for cumulative tables, we don't want them now
-        tab_filenames.push_back(name); // because it is an iterator
-        indexes.push_back(index);
+    CS_tot += tabCS_E.back(); // -1 is not allowed in C++
+
+  }
+
+  if ((id == 1000010010 ) || (id == 1000020040)) {
+
+    for (size_t i = 0; i < secondaries.size(); ++i) { // do the same but with id+2, to account for He as a target
+
+      tabCS_E.push_back(interpolate(E, data_map.at(id + 2).at(secondaries.at(i)).at(0).at(0), data_map.at(id + 2).at(secondaries.at(i)).at(0).at(1))); // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
+
+      CS_tot += tabCS_E.back(); // -1 is not allowed in C++
       }
-    index += 1;
-  }
-
-  for (size_t i = 0; i < tab_filenames.size(); ++i) {
-
-    tabCS_E.push_back(interpolate(E, dict.at(tab_filenames[i]).at(0), dict.at(tab_filenames[i]).at(1))); // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
-    CS_tot += tabCS_E[i]; // -1 is not allowed in C++
-
-  }
+    }
 
   Random &random = Random::instance();
   double random_number = random.rand() * CS_tot;
@@ -214,141 +258,171 @@ std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) co
     summed_CS += tabCS_E[secondary];
 
   }
-  return std::vector<double> {CS_tot, indexes[secondary]}; // indexes[secondary] is the index corresponding to the filename responsible for the interaction , ie we know the secondary being produced
+  tabCS_E.clear();
+  return std::vector<double> {CS_tot, secondary}; //  ie we keep track of the secondary being produced
+
 }
 
 
-void HadronicInteraction::performInteraction(Candidate *candidate, double secondary) const {
-
-  std::string filename;
+void HadronicInteraction::performInteraction(Candidate *candidate, double sec) const {
 
   int id = candidate->current.getId();
   double z = candidate->getRedshift();
-  double E = candidate->current.getEnergy() * (1+z) / GeV;
+  double E = candidate->current.getEnergy() * (1+z) ;
+  int to_read = 0;
 
-  int filename_index = static_cast<int>(secondary); // get the int back so that we can acces the corresponding filename
+  int secondary = static_cast<int>(sec); // get the int back so that we can acces the corresponding filename
 
+  if (((id == 1000010010) || (id == 1000020040))  && (E < 1.602176487e-9)){ // 10 GeV = 1.602176487e-9 is the first energy of the primary for the non L files (ie the not low energy files) ; the low energy extension is only for proton and He
+    to_read += 2;
+    }
 
-  if (E > dict.at(Filenames[filename_index]).at(0).at(0) && E < 10){ // 10 GeV is the first energy of the primary for the non L files (ie the not low energy files) ; need the dict with the low E part
-    std::string temp_filename = Filenames[filename_index]; // Make a non-const copy
-    temp_filename.erase(temp_filename.size() - 4);         // Erase the last 4 characters
-    filename = temp_filename + "L.txt";
+  if (secondary >=  secondaries.size()){
+    secondary -= secondaries.size(); // ie we have a CR interacting with He
+    id += 2; // to read the correct tables
   }
-  else{
-    filename = Filenames[filename_index]; // don't take the low energy file
-  }
 
+  secondary = secondaries.at(secondary); // get the code of the secondaries being produced
 
   std::vector<double> dCS_interp;
+  std::vector<double> result;
 
+  const auto& data_row = data_map.at(id).at(secondary).at(2 + to_read).at(0); // check the indexes maybe
 
-  const auto& data_row = dict_cumDCS.at(filename).at(0);
 
   for (size_t i = 0; i < data_row.size(); ++i) {
-        std::vector<double> result;
-        std::transform(dict_cumDCS.at(filename).begin(), dict_cumDCS.at(filename).end(), std::back_inserter(result),[i](const std::vector<double>& subvec) {return subvec[i];}); // extract ith element of each subvector of dict_cumDCS[filename] (the table containing the cumulative differential cross sections) // should be ok, just copied from previous code
 
-        dCS_interp.push_back(interpolate(E, dictE_prim.at(filename), result)) ; // interpolate a cumulative differential cross section value, at a given secondary energy (we loop on those energy, via i), on primary energy, and differential cross section for different primary energies # since it's cumulative CS and that we add values at increasinigly high Esec, dCS_interp is ordered
+        //std::transform(dict_cumDCS.at(filename).begin(), dict_cumDCS.at(filename).end(), std::back_inserter(result),[i](const std::vector<double>& subvec) {return subvec[i];}); // extract ith element of each subvector of dict_cumDCS[filename] (the table containing the cumulative differential cross sections) // should be ok, just copied from previous code
+        //std::cout << "about to enter the second for" << std::endl;
+        for (auto it = data_map.at(id).at(secondary).at(2 + to_read).begin(); it != data_map.at(id).at(secondary).at(2 + to_read).end(); ++it) {
+          //std::cout << "in the second for" << std::endl;
+          result.push_back((*it)[i]);
+        }
+
+        dCS_interp.push_back(interpolate(E, data_map.at(id).at(secondary).at(1 + to_read).at(0), result)) ; // interpolate a cumulative differential cross section value, at a given secondary energy (we loop on those energy, via i), on primary energy, and differential cross section for different primary energies # since it's cumulative CS and that we add values at increasinigly high Esec, dCS_interp is ordered
+        result.clear();
     }
 
 
 	Random &random = Random::instance();
 
-  double random_number = random.rand(dCS_interp.back() - dCS_interp[0]) + dCS_interp[0]; // random.rand is written to generate random numbers between 0 and x ; so we generate a random number betwen 0 and x-min, and then add min to this random number ; back : last element of the vector
+  double random_number = random.rand(dCS_interp.back() - dCS_interp[0]) + dCS_interp[0]; // random.rand is written to generate random numbers between 0 and x ; so we generate a random number betwen 0 and x-min, and then add min to this random number ; back : last element of the vector // maybe this could be simplified
 
+	double E_sec = interpolate(random_number, dCS_interp, data_map.at(id).at(secondary).at(1 + to_read).at(1)); //  have values between 0 and 1 (it's been normalised) // at : because we try to access a constant variable, and either use it in loops or in other non constant functions, which could indeed modify this variable. Using dict.at(filename) instead means that we access this variable in read-only mode
 
-	double E_sec = interpolate(random_number, dCS_interp, dictE_sec.at(filename)); //  have values between 0 and 1 (it's been normalised) // at : because we try to access a constant variable, and either use it in loops or in other non constant functions, which could indeed modify this variable. Using dict.at(filename) instead means that we access this variable in read-only mode
 
 
   double w = 1; // weigth of the particles
 
 
 
-	if (haveElectrons && filename.substr(0, 3) == "el_") { // ie the secondary is an electron
+	if (secondary == 11) { // ie the secondary is an electron
 
-    double f = (E_sec + mec2) / E;
+    candidate->current.setEnergy((E - E_sec - mec2) / (1 + z) ); // E_sec is kinetic !! ; Em : rest energy  ; should also substract the energy even if haveElectrons == False
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-		if (random.rand() < pow(1 - f, thinning)) {
-			w = 1. / pow(1 - f, thinning);
-			candidate->addSecondary(11, (E_sec + mec2) / (1 + z) * GeV , pos, w, interactionTag); // correct for the redshift
-    	candidate->current.setEnergy((E - E_sec - mec2) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy  ; should also substract the energy even if haveElectrons == False
+    if (haveElectrons){
+      double f = (E_sec + mec2) / E;
+
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      if (random.rand() < pow(1 - f, thinning)) {
+        w = 1. / pow(1 - f, thinning);
+        candidate->addSecondary(11, (E_sec + mec2) / (1 + z) , pos, w, interactionTag); // correct for the redshift
+      }
 		}
 	}
 
-	else if (haveElectrons && filename.find("pos_") != std::string::npos) { // positron
+	else if (secondary == -11) { // positron
 
-    double f = (E_sec + mec2) / E;
+    candidate->current.setEnergy((E - E_sec - mec2) / (1 + z) ); // E_sec is kinetic !! ; Em : rest energy
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-		if (random.rand() < pow(1 - f, thinning)) {
-			w = 1. / pow(1 - f, thinning); // w : weight of the secondary, default is 1
-			candidate->addSecondary(-11, (E_sec + mec2) / (1 + z) * GeV, pos, w, interactionTag);
-      candidate->current.setEnergy((E - E_sec - mec2) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    if (haveElectrons){
+      double f = (E_sec + mec2) / E;
+
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      if (random.rand() < pow(1 - f, thinning)) {
+        w = 1. / pow(1 - f, thinning); // w : weight of the secondary, default is 1
+        candidate->addSecondary(-11, (E_sec + mec2) / (1 + z) , pos, w, interactionTag);
+      }
 		}
 	}
 
-	else if (filename.find("prot_") != std::string::npos) { // proton
+	else if (secondary == 1000010010) { // proton
 
 		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(1000010010, (E_sec + mpc2) / (1 + z) * GeV, pos, w, interactionTag);
-    candidate->current.setEnergy((E - E_sec - mpc2) / (1 + z) * GeV); // E_sec is kinetic !! ; Em : rest energy
+    candidate->addSecondary(secondary, (E_sec + mpc2) / (1 + z), pos, w, interactionTag);
+    candidate->current.setEnergy((E - E_sec - mpc2) / (1 + z)); // E_sec is kinetic !! ; Em : rest energy
 	}
 
-	else if (filename.find("aprot_") != std::string::npos) { // anti proton
+	else if (secondary == -1000010010) { // anti proton
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(-1000010010, (E_sec + mpc2) / (1 + z) * GeV, pos, w, interactionTag);
-  	candidate->current.setEnergy((E - E_sec - mpc2) / (1 + z) * GeV); // E_sec is kinetic !! ; Em : rest energy
+    candidate->current.setEnergy((E - E_sec - mpc2) / (1 + z) ); // E_sec is kinetic !! ; Em : rest energy
+
+    if (haveantiNucleons){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, (E_sec + mpc2) / (1 + z), pos, w, interactionTag);
+    }
 	}
 
-	else if (havePhotons && filename.find("gam_") != std::string::npos)  { // gamma
-
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(22, E_sec / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+	else if (secondary == 22)  { // gamma
+    if (havePhotons){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, E_sec / (1 + z) , pos, w, interactionTag); // photons # Em = 0
+    }
+  	candidate->current.setEnergy((E - E_sec) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 	}
 
-  else if (haveNeutrinos && filename.find("nu_el") != std::string::npos)  { //  electronic neutrino, no mass energy for neutrinos ? We probably don't even care
+  else if (secondary == 12)  { //  electronic neutrino, no mass energy for neutrinos ? We probably don't even care
+    candidate->current.setEnergy((E - E_sec) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(12, E_sec / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    if (haveNeutrinos){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, E_sec / (1 + z), pos, w, interactionTag);
+    }
 	}
 
-  else if (haveNeutrinos && filename.find("anu_el") != std::string::npos)  { //  electronic antineutrino
+  else if (secondary == -12)  { //  electronic neutrino, no mass energy for neutrinos ? We probably don't even care
+    candidate->current.setEnergy((E - E_sec) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(-12, E_sec / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    if (haveNeutrinos){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, E_sec / (1 + z), pos, w, interactionTag);
+    }
 	}
 
-  else if (haveNeutrinos && filename.find("nu_mu") != std::string::npos)  { //  muonic neutrino
+  else if (secondary == 14)  { //  electronic neutrino, no mass energy for neutrinos ? We probably don't even care
+    candidate->current.setEnergy((E - E_sec) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(14, E_sec / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    if (haveNeutrinos){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, E_sec / (1 + z), pos, w, interactionTag);
+    }
 	}
 
-  else if (haveNeutrinos && filename.find("anu_mu") != std::string::npos)  { //  muonic antineutrino
+  else if (secondary == -14)  { //  electronic neutrino, no mass energy for neutrinos ? We probably don't even care
+    candidate->current.setEnergy((E - E_sec) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(-14, E_sec / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    if (haveNeutrinos){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, E_sec / (1 + z), pos, w, interactionTag);
+    }
 	}
 
-  else if (filename.substr(0, 2) == "n_")  { // neutron
+  else if (secondary == 100000010)  { // neutron
 
 		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(2112, (E_sec + mnc2) / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec - mnc2) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy
+    candidate->addSecondary(secondary, (E_sec + mnc2) / (1 + z) , pos, w, interactionTag);
+  	candidate->current.setEnergy((E - E_sec - mnc2) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy
 	}
 
-  else if (filename.find("an_") != std::string::npos)  { //  anti neutron
+  else if (secondary == -100000010)  { //  anti neutron
 
-		Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
-    candidate->addSecondary(-2112, (E_sec + mnc2) / (1 + z) * GeV, pos, w, interactionTag); // photons # Em = 0
-  	candidate->current.setEnergy((E - E_sec - mnc2) / (1 + z) * GeV ); // E_sec is kinetic !! ; Em : rest energy  // got all our particles for now, need to add the mass energy of each particle
+    candidate->current.setEnergy((E - E_sec - mnc2) / (1 + z)  ); // E_sec is kinetic !! ; Em : rest energy  // got all our particles for now
+
+    if (haveantiNucleons){
+      Vector3d pos = random.randomInterpolatedPosition(candidate->previous.getPosition(), candidate->current.getPosition());
+      candidate->addSecondary(secondary, (E_sec + mnc2) / (1 + z) , pos, w, interactionTag);
+    }
+
 	}
 
 	dCS_interp.clear();
@@ -361,17 +435,22 @@ void HadronicInteraction::process(Candidate *candidate) const {
   int id = candidate->current.getId();
 
   double z = candidate->getRedshift();
-  double E = candidate->current.getEnergy() * (1+z) / GeV ;
+  double E = candidate->current.getEnergy() * (1+z) ;
 
-  if ((abs(id) != 1000010010) && (abs(id) != 1000020040) && (abs(id) != 1000060120) && (abs(id) != 1000130260) && (abs(id) != 1000260520 )) // we don't want particles that are not in the tables (H, He, C, Al, Fe)
+
+  if ((id != 1000010010) && (id != 1000020040) && (id != 1000060120) && (id != 1000130260) && (id != 1000260520 )) // we don't want particles that are not in the tables (H, He, C, Al, Fe)
 		return;
 
 
+  if ((E > data_map.at(id).at(11).at(0).at(0).back()) || (E < data_map.at(id).at(11).at(0).at(0).at(0) )) { // all the limits are secondaries independant, apart from exotic ones (ad for example)
+    return;
+  }
+
   Vector3d position = candidate->current.getPosition();
 
-  std::vector<double> array = setInteraction(candidate); // return 2 values, CS_tot in 0, and secondary in 1
+  std::vector<double> array = setInteraction(candidate); // return 2 values, CS_tot in 0, and the code fo the secondary in 1
 
-  double inverse_mfp = (H_density + He_density) * array[0] * (barn * 1e-3)  ; //CS_tot computed before, put it in SI (from mb) // this one is not updated if we do several interactions in one step (the energy of the primary changes)
+  double inverse_mfp = (H_density + He_density) * array[0] ; //CS_tot computed before, put it in SI (from mb) // this one is not updated if we do several interactions in one step (the energy of the primary changes)
 
 
 	// run this loop at least once to limit the step size
