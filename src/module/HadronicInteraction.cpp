@@ -64,7 +64,7 @@ void HadronicInteraction::setTables(){
   data_map[1000060120] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
   data_map[1000130260] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
   data_map[1000260520] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
-  data_map[1000010012] = std::map<int, std::vector<std::vector<std::vector<double>>>>(); // + 1 at the end : to say that the target is Helium
+  data_map[1000010012] = std::map<int, std::vector<std::vector<std::vector<double>>>>(); // + 2 at the end : to say that the target is Helium
   data_map[1000020042] = std::map<int, std::vector<std::vector<std::vector<double>>>>();
 
 
@@ -97,7 +97,7 @@ void HadronicInteraction::setTables(){
 
   for (std::string filename : Filenames) {   // collect the data in a map of map of tuple of vectors (and then I can only use ints) and keep track of the primary and secondary
 
-    std::string path = "./Tables_HI/" + filename;
+    std::string path = "./Tables_HI_extra/" + filename;
 
 
     // initialize the maps
@@ -166,7 +166,7 @@ void HadronicInteraction::setTables(){
                   if (firstLine) {
                       stream >> firstValue;
                       while (stream >> data){
-                        data_map[id][secondary][to_fill1][1].push_back(data * GeV);  // put it in Joules // maybe I need to initialize // st::get : needed because this is a tuple // energies of secondaries
+                        data_map[id][secondary][to_fill1][1].push_back(data * GeV);  // put it in Joules // st::get : needed because this is a tuple // energies of secondaries
                       }
 
                       firstLine = false;
@@ -178,13 +178,13 @@ void HadronicInteraction::setTables(){
                     // Store the rest of the line into a row vector
                     std::vector<double> row;
                     while (stream >> data) {
-                      row.push_back(data);  // store each remaining value ! No unit as a normalised it (ie the tables are normalised between 0 and 1)
+                      row.push_back(data);  // store each remaining value ! No unit as I normalised it (ie the tables are normalised between 0 and 1)
                     }
 
                     if (!row.empty()) {   // if row is not empty
                       data_map[id][secondary][to_fill2].push_back(row); // each row correspond to a given primary energy, what varies are the secondary energies that are being considered
                       const auto& lol = data_map[id][secondary][to_fill2][0];
-                  }
+                    }
                   }
               }
           }
@@ -226,16 +226,19 @@ std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) co
   double z = candidate->getRedshift();
   double E = candidate->current.getEnergy() * (1+z) ;
 
-  double CS_tot = 0;
+  double CS_H = 0;
+  double CS_He = 0;
   int secondary = 0;
 
   std::vector<double> tabCS_E; // table of cross sections (for different processes) at a given energy : used to decide which process we perform
 
   for (size_t i = 0; i < secondaries.size(); ++i) {
 
-    tabCS_E.push_back(interpolate(E, data_map.at(id).at(secondaries.at(i)).at(0).at(0), data_map.at(id).at(secondaries.at(i)).at(0).at(1))); // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
+    tabCS_E.push_back(interpolate(E, data_map.at(id).at(secondaries.at(i)).at(0).at(0), data_map.at(id).at(secondaries.at(i)).at(0).at(1))) ; // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
 
-    CS_tot += tabCS_E.back(); // -1 is not allowed in C++
+    CS_H += tabCS_E.back(); // -1 is not allowed in C++
+
+    tabCS_E.back() *= H_density;
 
   }
 
@@ -245,12 +248,15 @@ std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) co
 
       tabCS_E.push_back(interpolate(E, data_map.at(id + 2).at(secondaries.at(i)).at(0).at(0), data_map.at(id + 2).at(secondaries.at(i)).at(0).at(1))); // get the CS at the energy of the primary interacting particle ; interpolate(x, tabX, tabY) ; we interpolate on the primary energy (x) and the cross section associated to a given process
 
-      CS_tot += tabCS_E.back(); // -1 is not allowed in C++
+      CS_He += tabCS_E.back(); // -1 is not allowed in C++
+
+      tabCS_E.back() *= He_density;
       }
     }
 
+  
   Random &random = Random::instance();
-  double random_number = random.rand() * CS_tot;
+  double random_number = random.rand() * (CS_H * H_density + CS_He * He_density); // need to account for densities (if there is no He, we can’t interact with it)
   double summed_CS = tabCS_E[0];
 
   while (summed_CS <= random_number){
@@ -258,8 +264,7 @@ std::vector<double> HadronicInteraction::setInteraction(Candidate *candidate) co
     summed_CS += tabCS_E[secondary];
 
   }
-  tabCS_E.clear();
-  return std::vector<double> {CS_tot, secondary}; //  ie we keep track of the secondary being produced
+  return std::vector<double> {CS_H, CS_He, secondary}; //  ie we keep track of the secondary being produced
 
 }
 
@@ -424,9 +429,6 @@ void HadronicInteraction::performInteraction(Candidate *candidate, double sec) c
     }
 
 	}
-
-	dCS_interp.clear();
-
 }
 
 void HadronicInteraction::process(Candidate *candidate) const {
@@ -448,9 +450,9 @@ void HadronicInteraction::process(Candidate *candidate) const {
 
   Vector3d position = candidate->current.getPosition();
 
-  std::vector<double> array = setInteraction(candidate); // return 2 values, CS_tot in 0, and the code fo the secondary in 1
+  std::vector<double> array = setInteraction(candidate); // return 3 values, CS with p and He in 0 and 1, and the code fo the secondary in 2
 
-  double inverse_mfp = (H_density + He_density) * array[0] ; //CS_tot computed before, put it in SI (from mb) // this one is not updated if we do several interactions in one step (the energy of the primary changes)
+  double inverse_mfp = H_density * array[0] + He_density * array[1]; //CS_tot computed before, // this one is not updated if we do several interactions in one step (the energy of the primary changes)
 
 
 	// run this loop at least once to limit the step size
@@ -463,7 +465,7 @@ void HadronicInteraction::process(Candidate *candidate) const {
 			candidate->limitNextStep(limit / inverse_mfp);
 			return;
 		}
-		performInteraction(candidate, array[1]);
+		performInteraction(candidate, array[2]);
 		step -= randDistance;
 	} while (step > 0.);
 
